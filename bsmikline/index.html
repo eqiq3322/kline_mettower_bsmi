@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BSMI K-Line Viewer</title>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <style>
+    body { font-family: "Times New Roman", serif; margin: 0; padding: 0; background: #000; color: #e0e0e0; }
+    #controls { padding: 10px; border-bottom: 1px solid #444; background: #111; }
+    .section { margin-bottom: 8px; }
+    #chart { width: 100%; height: 95vh; }
+    label { margin-right: 10px; }
+    .color-dot { display:inline-block; width:12px; height:12px; border-radius:2px; margin-left:4px; vertical-align:middle; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <div class="section">
+      <label>BSMI Month:</label>
+      <select id="monthSelect"></select>
+      <span id="status"></span>
+    </div>
+    <div class="section">
+      <div>
+        <strong>Time averages:</strong>
+        <label><input type="checkbox" class="toggle" data-trace="ma10" checked> MA_10min</label>
+        <label><input type="checkbox" class="toggle" data-trace="ma1h"> MA_1h</label>
+        <label><input type="checkbox" class="toggle" data-trace="ma6h"> MA_6h</label>
+        <label><input type="checkbox" class="toggle" data-trace="ma1mo"> MA_1mo</label>
+      </div>
+      <div style="margin-top:6px;">
+        <strong>Series:</strong>
+        <label><input type="checkbox" class="toggle" data-trace="ws100" checked> <span class="color-dot" style="background:#1f77b4"></span> WS_100</label>
+        <label><input type="checkbox" class="toggle" data-trace="ws69"> <span class="color-dot" style="background:#8c564b"></span> WS_69W</label>
+        <label><input type="checkbox" class="toggle" data-trace="ws38"> <span class="color-dot" style="background:#bcbd22"></span> WS_38W</label>
+        <label><input type="checkbox" class="toggle" data-trace="wd97" checked> <span class="color-dot" style="background:#7f7f7f"></span> WD_97</label>
+        <label><input type="checkbox" class="toggle" data-trace="wd35"> <span class="color-dot" style="background:#999"></span> WD_35</label>
+        <label><input type="checkbox" class="toggle" data-trace="at"> <span class="color-dot" style="background:#bcbd22"></span> AT_95</label>
+        <label><input type="checkbox" class="toggle" data-trace="rh"> <span class="color-dot" style="background:#d62728"></span> RH_95</label>
+        <label><input type="checkbox" class="toggle" data-trace="bp"> <span class="color-dot" style="background:#ffa500"></span> BP_93</label>
+        <label><input type="checkbox" class="toggle" data-trace="ti"> <span class="color-dot" style="background:#e377c2"></span> TI_10min</label>
+        <label><input type="checkbox" class="toggle" data-trace="gust"> <span class="color-dot" style="background:#7f7f7f"></span> GustFactor</label>
+      </div>
+    </div>
+  </div>
+  <div id="chart"></div>
+
+  <script>
+    const fallbackMonths = ["201603","201604","201605","201606","201607","201608","201609","201610","201611","201612","201701","201702","201703","201704","201705","201706","201707","201708","201709","201710","201711","201712","201801","201802","201803","201804","201805","201806","201807","201808","201809","201810","201811","201812","201901","201902","201903","201904","201905","201906","201907","201908","201909","201910","201911","201912","202001","202002","202003","202004","202005","202006","202007","202008","202009","202010","202011","202012","202101","202102","202103","202104","202105","202106","202107","202108","202109","202110","202111","202112","202201","202202","202203","202204","202205","202206","202207","202208","202209","202210","202211","202301","202302","202303","202304","202305","202306","202307","202308","202309","202310","202311","202312","202401","202402","202403","202404","202405","202406","202407","202408","202409","202410","202411","202412","202501","202502","202503"];
+    let months = [...fallbackMonths]; // fallback
+    const cache = {};
+    const aggBase = "../DATA/bsmikline/agg";
+
+    const axisColors = {
+      ws: "#1f77b4",
+      ma10: "#2ca02c",
+      ma1h: "#ff7f0e",
+      ma6h: "#9467bd",
+      ma1m: "#17becf",
+      rh: "#d62728",
+      bp: "#ffa500",
+      wd: "#7f7f7f",
+      at: "#bcbd22",
+      ti: "#e377c2",
+      gust: "#7f7f7f"
+    };
+
+    async function buildMonthOptions() {
+      const sel = document.getElementById("monthSelect");
+      sel.innerHTML = "";
+      months.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        sel.appendChild(opt);
+      });
+      sel.value = months[0];
+    }
+
+    function setStatus(msg) {
+      document.getElementById("status").textContent = msg;
+    }
+
+    async function loadMonth(month) {
+      if (cache[month]) return cache[month];
+      setStatus("Loading " + month + "...");
+      const url = `${aggBase}/BSMI${month}.csv`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error("Failed to load " + url);
+      }
+      const text = await resp.text();
+      const rows = text.trim().split(/\r?\n/);
+      const header = rows.shift().split(",");
+      const data = header.reduce((acc, h) => { acc[h] = []; return acc; }, {});
+      rows.forEach(line => {
+        const cols = line.split(",");
+        header.forEach((h, i) => data[h].push(cols[i] === "" ? null : (h === "TIMESTAMP" ? new Date(cols[i]) : parseFloat(cols[i]))));
+      });
+      cache[month] = data;
+      setStatus("");
+      return data;
+    }
+
+    function breakDirection(dir) {
+      const out = [];
+      for (let i = 0; i < dir.length; i++) {
+        if (i === 0) { out.push(dir[i]); continue; }
+        const prev = dir[i-1], cur = dir[i];
+        if (prev == null || cur == null) { out.push(null); continue; }
+        const diff = Math.abs(cur - prev);
+        if (diff > 180) out.push(null);
+        out.push(cur);
+      }
+      return out;
+    }
+
+    function statsFor(series) {
+      const vals = series.filter(v => v !== null && !Number.isNaN(v));
+      if (!vals.length) return null;
+      vals.sort((a,b) => a-b);
+      const q = p => {
+        const idx = (vals.length - 1) * p;
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        if (lo === hi) return vals[lo];
+        return vals[lo] * (hi - idx) + vals[hi] * (idx - lo);
+      };
+      return {min: vals[0], q1: q(0.25), med: q(0.5), q3: q(0.75), max: vals[vals.length-1]};
+    }
+
+    function attachStats(series, stats) {
+      if (!stats) return null;
+      return Array(series.length).fill([stats.min, stats.q1, stats.med, stats.q3, stats.max]);
+    }
+
+    function isChecked(key) {
+      const el = document.querySelector(`.toggle[data-trace='${key}']`);
+      return el ? el.checked : false;
+    }
+
+    function getActiveWindowMinutes() {
+      const order = [
+        {chk:"ma10", minutes:10},
+        {chk:"ma1h", minutes:60},
+        {chk:"ma6h", minutes:360},
+        {chk:"ma1mo", minutes:30*24*60},
+      ];
+      for (const item of order) {
+        const el = document.querySelector(`.toggle[data-trace='${item.chk}']`);
+        if (el && el.checked) return item.minutes;
+      }
+      return 10;
+    }
+
+    function quantiles(arr) {
+      if (!arr.length) return [null,null,null,null,null];
+      const sorted = [...arr].sort((a,b)=>a-b);
+      const q = p => {
+        const idx = (sorted.length - 1) * p;
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        if (lo === hi) return sorted[lo];
+        return sorted[lo]*(hi-idx)+sorted[hi]*(idx-lo);
+      };
+      return [sorted[0], q(0.25), q(0.5), q(0.75), sorted[sorted.length-1]];
+    }
+
+    function rollingStats(series, times, windowMin) {
+      const res = {min:[], q1:[], med:[], q3:[], max:[]};
+      if (!series || !series.length) return res;
+      const stepMin = times.length>1 ? (times[1]-times[0])/(1000*60) : 1;
+      let winCount = Math.max(1, Math.round(windowMin / Math.max(stepMin,1)));
+      if (winCount > 1000) winCount = 1000; // avoid heavy windows
+      for (let i=0;i<series.length;i++){
+        const start = Math.max(0, i - winCount + 1);
+        const slice = [];
+        for (let j=start;j<=i;j++){
+          const v = series[j];
+          if (v!==null && !Number.isNaN(v)) slice.push(v);
+        }
+        const [mn,q1,med,q3,mx] = quantiles(slice);
+        res.min.push(mn); res.q1.push(q1); res.med.push(med); res.q3.push(q3); res.max.push(mx);
+      }
+      return res;
+    }
+
+    function buildCustomData(series, stats, maArr) {
+      const out = [];
+      for (let i=0;i<series.length;i++){
+        const val = (maArr && maArr[i]!==undefined) ? maArr[i] : series[i];
+        out.push([val, stats.min[i], stats.q1[i], stats.med[i], stats.q3[i], stats.max[i]]);
+      }
+      return out;
+    }
+
+    function makeTraces(d) {
+      const t = d["TIMESTAMP"];
+      const traces = [];
+      const activeWinMin = getActiveWindowMinutes();
+      const stats100 = rollingStats(d["WS_100"], t, activeWinMin);
+      const stats69 = rollingStats(d["WS_69W"], t, activeWinMin);
+      const stats38 = rollingStats(d["WS_38W"], t, activeWinMin);
+
+      const maMap = {};
+      maMap[10] = d["MA_10min"];
+      maMap[60] = d["MA_1h"];
+      maMap[360] = d["MA_6h"];
+      maMap[30 * 24 * 60] = d["MA_1mo"];
+      const activeMA = maMap[activeWinMin] || d["MA_10min"];
+
+      const maDefs = [
+        ["MA_10min","MA 10min","ma10","ma10"],
+        ["MA_1h","MA 1h","ma1h","ma1h"],
+        ["MA_6h","MA 6h","ma6h","ma6h"],
+        ["MA_1mo","MA 1mo","ma1m","ma1mo"],
+      ];
+      maDefs.forEach(([col,label,colorKey,toggleKey]) => {
+        if (!d[col]) return;
+        traces.push({
+          type: "scattergl",
+          mode: "lines",
+          name: label,
+          x: t,
+          y: d[col],
+          hoverinfo:"skip",
+          line: {color: axisColors[colorKey], width: 1.5},
+          yaxis: "y",
+          visible: isChecked(toggleKey)
+        });
+      });
+
+      const cd100 = buildCustomData(d["WS_100"], stats100, activeMA);
+      const cd69 = buildCustomData(d["WS_69W"], stats69, activeMA);
+      const cd38 = buildCustomData(d["WS_38W"], stats38, activeMA);
+
+      traces.push({type:"scattergl", mode:"lines", name:"WS_100", x:t, y:d["WS_100"], customdata: cd100, hovertemplate:"WS_100 MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws, width:1}, yaxis:"y", visible:isChecked("ws100")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_69W", x:t, y:d["WS_69W"], customdata: cd69, hovertemplate:"WS_69W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:"#8c564b", width:1}, yaxis:"y", visible:isChecked("ws69")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_38W", x:t, y:d["WS_38W"], customdata: cd38, hovertemplate:"WS_38W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:"#bcbd22", width:1}, yaxis:"y", visible:isChecked("ws38")});
+
+      traces.push({type:"scattergl", mode:"lines", name:"WD_97", x:t, y:breakDirection(d["WD_97"]), line:{color:axisColors.wd, width:1}, yaxis:"y4", visible:isChecked("wd97")});
+      traces.push({type:"scattergl", mode:"lines", name:"WD_35", x:t, y:breakDirection(d["WD_35"]), line:{color:"#999", width:1}, yaxis:"y4", visible:isChecked("wd35")});
+
+      traces.push({type:"scattergl", mode:"lines", name:"AT_95", x:t, y:d["AT_95"], line:{color:axisColors.at, width:1}, yaxis:"y5", visible:isChecked("at")});
+      traces.push({type:"scattergl", mode:"lines", name:"RH_95", x:t, y:d["RH_95"], line:{color:axisColors.rh, width:1}, yaxis:"y2", visible:isChecked("rh")});
+      traces.push({type:"scattergl", mode:"lines", name:"BP_93", x:t, y:d["BP_93"], line:{color:axisColors.bp, width:1}, yaxis:"y3", visible:isChecked("bp")});
+
+      traces.push({type:"scattergl", mode:"lines", name:"TI_10min", x:t, y:d["TI_10min"], line:{color:axisColors.ti, dash:"dot", width:1}, yaxis:"y6", visible:isChecked("ti"), hovertemplate:"TI_10min %{y:.3f}<extra></extra>"});
+      traces.push({type:"scattergl", mode:"markers", marker:{color:axisColors.gust, size:3}, name:"GustFactor", x:t, y:d["GustFactor"], yaxis:"y6", visible:isChecked("gust"), hovertemplate:"GustFactor %{y:.3f}<extra></extra>"});
+
+      return traces;
+    }
+
+    function layoutTemplate() {
+      return {
+        font: {family:"Times New Roman, serif", color:"#e0e0e0"},
+        paper_bgcolor:"#000",
+        plot_bgcolor:"#000",
+        hovermode:"x unified",
+        xaxis: {
+          title: "Time",
+          showspikes:true,
+          spikemode:"across",
+          spikecolor:"#888",
+          spikethickness:1,
+          spikesnap:"cursor",
+          rangeslider:{visible:false},
+          gridcolor:"#222",
+          zerolinecolor:"#333",
+        },
+        yaxis: {title: "Wind speed (m/s)", domain:[0.05,0.98], gridcolor:"#222", zerolinecolor:"#333"},
+        yaxis2: {title: "", overlaying:"y", side:"right", position:1.02, anchor:"free", showgrid:false, tickfont:{color:axisColors.rh}, titlefont:{color:axisColors.rh}, showline:false},
+        yaxis3: {title: "", overlaying:"y", side:"right", position:1.08, anchor:"free", showgrid:false, tickfont:{color:axisColors.bp}, titlefont:{color:axisColors.bp}, showline:false},
+        yaxis4: {title: "", overlaying:"y", side:"right", position:1.14, anchor:"free", range:[0,360], showgrid:false, tickfont:{color:axisColors.wd}, titlefont:{color:axisColors.wd}, showline:false},
+        yaxis5: {title: "", overlaying:"y", side:"right", position:1.20, anchor:"free", showgrid:false, tickfont:{color:axisColors.at}, titlefont:{color:axisColors.at}, showline:false},
+        yaxis6: {overlaying:"y", side:"right", position:1.26, anchor:"free", showgrid:false, showticklabels:false, zeroline:false, title:""},
+        showlegend: false,
+        margin: {l:60, r:220, t:30, b:30},
+      };
+    }
+
+    async function render(month) {
+      try {
+        const data = await loadMonth(month);
+        const n = (data["WS_100"] || []).filter(v => v !== null && !Number.isNaN(v)).length;
+        const traces = makeTraces(data);
+        await Plotly.newPlot("chart", traces, layoutTemplate(), {responsive:true, displaylogo:false});
+        setStatus(`Loaded ${month} (${n} points)`);
+        bindToggles(traces);
+      } catch (err) {
+        console.error(err);
+        setStatus("Error: " + err.message);
+      }
+    }
+
+    function bindToggles(traces) {
+      const nameToIdx = {};
+      traces.forEach((tr, i) => {
+        if (!nameToIdx[tr.name]) nameToIdx[tr.name] = [];
+        nameToIdx[tr.name].push(i);
+      });
+      const mapping = {
+        ma10: ["MA 10min"],
+        ma1h: ["MA 1h"],
+        ma6h: ["MA 6h"],
+        ma1mo: ["MA 1mo"],
+        ws100: ["WS_100"],
+        ws69: ["WS_69W"],
+        ws38: ["WS_38W"],
+        wd97: ["WD_97"],
+        wd35: ["WD_35"],
+        at: ["AT_95"],
+        rh: ["RH_95"],
+        bp: ["BP_93"],
+        ti: ["TI_10min"],
+        gust: ["GustFactor"],
+      };
+      document.querySelectorAll('.toggle').forEach(cb => {
+        cb.onchange = () => {
+          if (["ma10","ma1h","ma6h","ma1mo"].includes(cb.dataset.trace)) {
+            const current = document.getElementById("monthSelect").value;
+            render(current);
+            return;
+          }
+          const names = mapping[cb.dataset.trace] || [];
+          const visibility = cb.checked ? true : "legendonly";
+          names.forEach(name => {
+            (nameToIdx[name] || []).forEach(i => Plotly.restyle("chart", {visible: visibility}, i));
+          });
+        };
+      });
+    }
+
+    document.getElementById("monthSelect").onchange = (e) => {
+      render(e.target.value);
+    };
+
+    async function init() {
+      try {
+        const resp = await fetch(`${aggBase}/months.json`);
+        if (resp.ok) {
+          const list = await resp.json();
+          if (Array.isArray(list) && list.length) months = list;
+        } else {
+          console.warn("months.json load failed, using fallback");
+        }
+      } catch(e) {
+        console.warn("months.json fetch error, using fallback", e);
+      }
+      await buildMonthOptions();
+      render(months[0]);
+    }
+
+    init();
+  </script>
+</body>
+</html>
