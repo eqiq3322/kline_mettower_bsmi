@@ -429,6 +429,8 @@
         hoverlabel:{bgcolor:"rgba(0,0,0,0)", bordercolor:"rgba(0,0,0,0)", font:{color:"rgba(0,0,0,0)"}},
         xaxis: {
           title: "Time",
+          side: "bottom",
+          anchor: "y",
           showspikes:true,
           spikemode:"across",
           spikecolor:"#ffffff",
@@ -439,7 +441,7 @@
           gridcolor:"#222",
           zerolinecolor:"#333",
         },
-        yaxis: {title: "Wind speed (m/s)", domain:[0.05,0.98], gridcolor:"#222", zerolinecolor:"#333", showspikes:true, spikemode:"across", spikedash:"dash", spikecolor:"#ffffff", spikethickness:1, spikesnap:"cursor"},
+        yaxis: {title: "Wind speed (m/s)", domain:[0.05,0.98], gridcolor:"#222", zerolinecolor:"#333", showspikes:true, spikemode:"across", spikedash:"dash", spikecolor:"#ffffff", spikethickness:1, spikesnap:"cursor", side:"left"},
         yaxis2: {title: "", overlaying:"y", side:"right", position:1.02, anchor:"free", showgrid:false, tickfont:{color:axisColors.rh}, titlefont:{color:axisColors.rh}, showline:false, showspikes:true, spikemode:"across", spikedash:"dash", spikecolor:"#ffffff", spikethickness:1, spikesnap:"cursor"},
         yaxis3: {title: "", overlaying:"y", side:"right", position:1.08, anchor:"free", showgrid:false, tickfont:{color:axisColors.bp}, titlefont:{color:axisColors.bp}, showline:false, showspikes:true, spikemode:"across", spikedash:"dash", spikecolor:"#ffffff", spikethickness:1, spikesnap:"cursor"},
         yaxis4: {title: "", overlaying:"y", side:"right", position:1.14, anchor:"free", range:[0,360], showgrid:false, tickfont:{color:axisColors.wd}, titlefont:{color:axisColors.wd}, showline:false, showspikes:true, spikemode:"across", spikedash:"dash", spikecolor:"#ffffff", spikethickness:1, spikesnap:"cursor"},
@@ -528,15 +530,15 @@
         hb.textContent = parts.join("  |  ");
         hb.style.visibility = 'visible';
 
-        // position time and value tags
         const rect = gd.getBoundingClientRect();
-        const px = (pts[0].xpx !== undefined) ? pts[0].xpx : null;
-        const py = (pts[0].ypx !== undefined) ? pts[0].ypx : null;
+        const ev = data.event || {};
+        const cx = ev.clientX;
+        const cy = ev.clientY;
         // time tag along x-axis
-        if (px !== null) {
+        if (cx !== undefined) {
           tagTime.style.display = "block";
           tagTime.textContent = ts;
-          tagTime.style.left = `${rect.left + px}px`;
+          tagTime.style.left = `${cx}px`;
           tagTime.style.top = `${rect.bottom - 24}px`;
           tagTime.style.transform = "translateX(-50%)";
         } else {
@@ -544,11 +546,11 @@
         }
         // wind speed tag (y-axis, use first y-axis point)
         const pY = pts.find(p => p.data.yaxis === "y");
-        if (pY && py !== null) {
+        if (pY && cy !== undefined) {
           tagVal.style.display = "block";
           tagVal.textContent = `${pY.y != null ? pY.y.toFixed(3) : ""}`;
           tagVal.style.left = `${rect.right - 70}px`;
-          tagVal.style.top = `${rect.top + pY.ypx - 10}px`;
+          tagVal.style.top = `${cy - 10}px`;
         } else {
           tagVal.style.display = "none";
         }
