@@ -547,20 +547,16 @@
         const axisY = gd._fullLayout && gd._fullLayout.yaxis;
         const offsetY = axisY && axisY._offset ? axisY._offset : 0;
         const ptY = pts.find(p => p.data.yaxis === "y");
-        let py = null;
         let yVal = null;
+        let py = null;
         if (axisY && ptY && ptY.y != null) {
           yVal = ptY.y;
-          const pxCoord = (ptY.ypx !== undefined) ? ptY.ypx : null;
-          if (pxCoord !== null) {
-            py = pxCoord + offsetY + rect.top;
-          } else if (cy !== undefined) {
-            py = cy;
+          if (typeof axisY.l2p === "function") {
+            py = axisY.l2p(yVal) + offsetY + rect.top;
           }
-        } else if (axisY && cy !== undefined) {
-          const plotY = cy - rect.top - offsetY;
-          yVal = axisY.p2l(plotY);
-          py = axisY.l2p(yVal) + offsetY + rect.top;
+          if (py === null && ptY.ypx !== undefined) {
+            py = ptY.ypx + offsetY + rect.top;
+          }
         }
         if (py !== null && yVal !== null && !Number.isNaN(yVal)) {
           tagVal.style.display = "block";
