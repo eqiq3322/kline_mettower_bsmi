@@ -29,6 +29,18 @@
       line-height: 20px;
       z-index: 10;
     }
+    .hover-tag {
+      position: absolute;
+      background: #444;
+      color: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 11;
+      opacity: 0.9;
+    }
   </style>
 </head>
 <body>
@@ -62,6 +74,8 @@
     </div>
   </div>
   <div id="hoverbar"></div>
+  <div id="hover-time" class="hover-tag" style="display:none;"></div>
+  <div id="hover-val" class="hover-tag" style="display:none;"></div>
   <div id="chart"></div>
 
   <script>
@@ -489,6 +503,8 @@
     function bindHoverbar() {
       const gd = document.getElementById("chart");
       const hb = document.getElementById("hoverbar");
+      const tagTime = document.getElementById("hover-time");
+      const tagVal = document.getElementById("hover-val");
       const adjustPos = () => {
         const ctrl = document.getElementById("controls");
         const top = ctrl ? ctrl.offsetHeight + 4 : 60;
@@ -511,10 +527,37 @@
         });
         hb.textContent = parts.join("  |  ");
         hb.style.visibility = 'visible';
+
+        // position time and value tags
+        const rect = gd.getBoundingClientRect();
+        const px = (pts[0].xpx !== undefined) ? pts[0].xpx : null;
+        const py = (pts[0].ypx !== undefined) ? pts[0].ypx : null;
+        // time tag along x-axis
+        if (px !== null) {
+          tagTime.style.display = "block";
+          tagTime.textContent = ts;
+          tagTime.style.left = `${rect.left + px}px`;
+          tagTime.style.top = `${rect.bottom - 24}px`;
+          tagTime.style.transform = "translateX(-50%)";
+        } else {
+          tagTime.style.display = "none";
+        }
+        // wind speed tag (y-axis, use first y-axis point)
+        const pY = pts.find(p => p.data.yaxis === "y");
+        if (pY && py !== null) {
+          tagVal.style.display = "block";
+          tagVal.textContent = `${pY.y != null ? pY.y.toFixed(3) : ""}`;
+          tagVal.style.left = `${rect.right - 70}px`;
+          tagVal.style.top = `${rect.top + pY.ypx - 10}px`;
+        } else {
+          tagVal.style.display = "none";
+        }
       });
       gd.on('plotly_unhover', () => {
         hb.textContent = '';
         hb.style.visibility = 'hidden';
+        tagTime.style.display = "none";
+        tagVal.style.display = "none";
       });
     }
 
