@@ -87,6 +87,12 @@
       ti: "#e377c2",
       gust: "#7f7f7f"
     };
+    const maConfigs = [
+      {chk:"ma10", label:"MA_10min", minutes:10, shade:1.0},
+      {chk:"ma1h", label:"MA_1h", minutes:60, shade:0.8},
+      {chk:"ma6h", label:"MA_6h", minutes:360, shade:0.6},
+      {chk:"ma1mo", label:"MA_1mo", minutes:30*24*60, shade:0.4},
+    ];
 
     async function buildMonthOptions() {
       const sel = document.getElementById("monthSelect");
@@ -206,6 +212,37 @@
       return res;
     }
 
+    function computeMA(series, times, windowMin) {
+      if (!series || !series.length) return [];
+      const stepMin = times.length>1 ? (times[1]-times[0])/(1000*60) : 1;
+      let winCount = Math.max(1, Math.round(windowMin / Math.max(stepMin,1)));
+      if (winCount < 1) winCount = 1;
+      const res = [];
+      const queue = [];
+      let sum = 0;
+      let count = 0;
+      for (let i=0;i<series.length;i++){
+        const v = series[i];
+        queue.push(v);
+        if (v!==null && !Number.isNaN(v)) { sum += v; count += 1; }
+        if (queue.length > winCount) {
+          const old = queue.shift();
+          if (old!==null && !Number.isNaN(old)) { sum -= old; count -= 1; }
+        }
+        res.push(count>0 ? sum/count : null);
+      }
+      return res;
+    }
+
+    function shadeColor(hex, factor) {
+      const h = hex.replace("#","").padEnd(6,"0");
+      const r = Math.round(parseInt(h.substring(0,2),16) * factor);
+      const g = Math.round(parseInt(h.substring(2,4),16) * factor);
+      const b = Math.round(parseInt(h.substring(4,6),16) * factor);
+      const clamp = v => Math.min(255, Math.max(0, v));
+      return "#" + clamp(r).toString(16).padStart(2,"0") + clamp(g).toString(16).padStart(2,"0") + clamp(b).toString(16).padStart(2,"0");
+    }
+
     function buildCustomData(series, stats, maArr) {
       const out = [];
       for (let i=0;i<series.length;i++){
@@ -218,53 +255,55 @@
     function makeTraces(d) {
       const t = d["TIMESTAMP"];
       const traces = [];
-      const activeWinMin = getActiveWindowMinutes();
-      const windSelected = isChecked("ws100") || isChecked("ws69") || isChecked("ws38");
-
-      const maMap = {};
-      maMap[10] = d["MA_10min"];
-      maMap[60] = d["MA_1h"];
-      maMap[360] = d["MA_6h"];
-      maMap[30 * 24 * 60] = d["MA_1mo"];
-      const activeMA = maMap[activeWinMin] || d["MA_10min"];
-
-      const maDefs = [
-        ["MA_10min","MA 10min","ma10","ma10"],
-        ["MA_1h","MA 1h","ma1h","ma1h"],
-        ["MA_6h","MA 6h","ma6h","ma6h"],
-        ["MA_1mo","MA 1mo","ma1m","ma1mo"],
+      const hoverNone = {hovertemplate:"", hoverinfo:"none", hoverlabel:{bgcolor:"rgba(0,0,0,0)", bordercolor:"rgba(0,0,0,0)", font:{color:"rgba(0,0,0,0)"}}};
+      const seriesList = [
+        {chk:"ws100", key:"WS_100", baseColor:axisColors.ws, axis:"y"},
+        {chk:"ws69", key:"WS_69W", baseColor:axisColors.ws69, axis:"y"},
+        {chk:"ws38", key:"WS_38W", baseColor:axisColors.ws38, axis:"y"},
+        {chk:"wd97", key:"WD_97", baseColor:axisColors.wd, axis:"y4", transform:breakDirection},
+        {chk:"wd35", key:"WD_35", baseColor:axisColors.wd35, axis:"y4", transform:breakDirection},
+        {chk:"at", key:"AT_95", baseColor:axisColors.at, axis:"y5"},
+        {chk:"rh", key:"RH_95", baseColor:axisColors.rh, axis:"y2"},
+        {chk:"bp", key:"BP_93", baseColor:axisColors.bp, axis:"y3"},
+        {chk:"ti", key:"TI_10min", baseColor:axisColors.ti, axis:"y6"},
+        {chk:"gust", key:"GustFactor", baseColor:axisColors.gust, axis:"y6", mode:"markers", marker:{color:axisColors.gust, size:3}},
       ];
-      maDefs.forEach(([col,label,colorKey,toggleKey]) => {
-        if (!d[col]) return;
-        traces.push({
-          type: "scattergl",
-          mode: "lines",
-          name: label,
-          x: t,
-          y: d[col],
-          hoverinfo:"skip",
-          line: {color: "rgba(0,0,0,0)", width: 0.1},
-          opacity: 0,
-          yaxis: "y",
-          visible: false
+
+      const selectedMas = maConfigs.filter(cfg => isChecked(cfg.chk));
+      const selectedSeries = seriesList.filter(s => isChecked(s.chk));
+      const maCache = {};
+
+      selectedMas.forEach(cfg => {
+        selectedSeries.forEach(s => {
+          const base = d[s.key];
+          if (!base) return;
+          let yArr;
+          if (cfg.minutes === 10) {
+            yArr = s.transform ? s.transform(base) : base;
+          } else {
+            if (!maCache[cfg.minutes]) maCache[cfg.minutes] = {};
+            if (!maCache[cfg.minutes][s.key]) {
+              const raw = s.transform ? s.transform(base) : base;
+              maCache[cfg.minutes][s.key] = computeMA(raw, t, cfg.minutes);
+            }
+            yArr = maCache[cfg.minutes][s.key];
+          }
+          const color = cfg.minutes === 10 ? s.baseColor : shadeColor(s.baseColor, cfg.shade);
+          traces.push({
+            type: s.mode === "markers" ? "scattergl" : "scattergl",
+            mode: s.mode || "lines",
+            name: s.key,
+            meta: {series: s.key, ma: cfg.label},
+            x: t,
+            y: yArr,
+            yaxis: s.axis,
+            line: s.mode === "markers" ? undefined : {color, width:1},
+            marker: s.marker ? {...s.marker, color} : undefined,
+            visible: true,
+            ...hoverNone
+          });
         });
       });
-
-      const hoverNone = {hovertemplate:"", hoverinfo:"none", hoverlabel:{bgcolor:"rgba(0,0,0,0)", bordercolor:"rgba(0,0,0,0)", font:{color:"rgba(0,0,0,0)"}}};
-
-      traces.push({type:"scattergl", mode:"lines", name:"WS_100", x:t, y:d["WS_100"], customdata: null, ...hoverNone, line:{color:axisColors.ws, width:1}, yaxis:"y", visible:isChecked("ws100")});
-      traces.push({type:"scattergl", mode:"lines", name:"WS_69W", x:t, y:d["WS_69W"], customdata: null, ...hoverNone, line:{color:axisColors.ws69, width:1}, yaxis:"y", visible:isChecked("ws69")});
-      traces.push({type:"scattergl", mode:"lines", name:"WS_38W", x:t, y:d["WS_38W"], customdata: null, ...hoverNone, line:{color:axisColors.ws38, width:1}, yaxis:"y", visible:isChecked("ws38")});
-
-      traces.push({type:"scattergl", mode:"lines", name:"WD_97", x:t, y:breakDirection(d["WD_97"]), ...hoverNone, line:{color:axisColors.wd, width:1}, yaxis:"y4", visible:isChecked("wd97")});
-      traces.push({type:"scattergl", mode:"lines", name:"WD_35", x:t, y:breakDirection(d["WD_35"]), ...hoverNone, line:{color:axisColors.wd35, width:1}, yaxis:"y4", visible:isChecked("wd35")});
-
-      traces.push({type:"scattergl", mode:"lines", name:"AT_95", x:t, y:d["AT_95"], ...hoverNone, line:{color:axisColors.at, width:1}, yaxis:"y5", visible:isChecked("at")});
-      traces.push({type:"scattergl", mode:"lines", name:"RH_95", x:t, y:d["RH_95"], ...hoverNone, line:{color:axisColors.rh, width:1}, yaxis:"y2", visible:isChecked("rh")});
-      traces.push({type:"scattergl", mode:"lines", name:"BP_93", x:t, y:d["BP_93"], ...hoverNone, line:{color:axisColors.bp, width:1}, yaxis:"y3", visible:isChecked("bp")});
-
-      traces.push({type:"scattergl", mode:"lines", name:"TI_10min", x:t, y:d["TI_10min"], ...hoverNone, line:{color:axisColors.ti, dash:"dot", width:1}, yaxis:"y6", visible:isChecked("ti")});
-      traces.push({type:"scattergl", mode:"markers", marker:{color:axisColors.gust, size:3}, name:"GustFactor", x:t, y:d["GustFactor"], yaxis:"y6", visible:isChecked("gust"), ...hoverNone});
 
       return traces;
     }
@@ -317,14 +356,11 @@
     function bindToggles(traces) {
       const nameToIdx = {};
       traces.forEach((tr, i) => {
-        if (!nameToIdx[tr.name]) nameToIdx[tr.name] = [];
-        nameToIdx[tr.name].push(i);
+        const key = (tr.meta && tr.meta.series) ? tr.meta.series : tr.name;
+        if (!nameToIdx[key]) nameToIdx[key] = [];
+        nameToIdx[key].push(i);
       });
       const mapping = {
-        ma10: ["MA 10min"],
-        ma1h: ["MA 1h"],
-        ma6h: ["MA 6h"],
-        ma1mo: ["MA 1mo"],
         ws100: ["WS_100"],
         ws69: ["WS_69W"],
         ws38: ["WS_38W"],
@@ -338,7 +374,7 @@
       };
       document.querySelectorAll('.toggle').forEach(cb => {
         cb.onchange = () => {
-          if (["ma10","ma1h","ma6h","ma1mo","ws100","ws69","ws38"].includes(cb.dataset.trace)) {
+          if (["ma10","ma1h","ma6h","ma1mo"].includes(cb.dataset.trace)) {
             const current = document.getElementById("monthSelect").value;
             render(current);
             return;
@@ -370,7 +406,7 @@
         const parts = [ts];
         pts.forEach(p => {
           if (p.data.visible === false || p.data.visible === "legendonly") return;
-          const name = p.data.name;
+          const name = (p.data.meta && p.data.meta.ma) ? `${p.data.name} (${p.data.meta.ma})` : p.data.name;
           let val = p.y;
           if (typeof val === "number") parts.push(`${name}: ${val.toFixed(3)}`);
           else parts.push(`${name}: ${val}`);
