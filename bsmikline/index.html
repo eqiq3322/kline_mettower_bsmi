@@ -545,12 +545,14 @@
         }
         // wind speed tag (y-axis, use first y-axis point)
         const yaxisObj = gd._fullLayout && gd._fullLayout.yaxis;
-        if (yaxisObj && cy !== undefined) {
+        const px = (pts[0].xpx !== undefined) ? pts[0].xpx : (cx !== undefined ? cx - rect.left : null);
+        const py = (pts[0].ypx !== undefined) ? pts[0].ypx : (cy !== undefined ? cy - rect.top : null);
+        if (yaxisObj && py !== null) {
           tagVal.style.display = "block";
-          const yVal = yaxisObj.p2d(cy - rect.top);
+          const yVal = yaxisObj.p2d(py);
           tagVal.textContent = `${yVal != null ? yVal.toFixed(3) : ""}`;
           tagVal.style.left = `${rect.left + 10}px`;
-          tagVal.style.top = `${cy - 10}px`;
+          tagVal.style.top = `${rect.top + py - 10}px`;
         } else {
           tagVal.style.display = "none";
         }
