@@ -250,7 +250,7 @@
         });
       });
 
-      const hoverNone = {hovertemplate:"<extra></extra>", hoverinfo:"skip", hoverlabel:{bgcolor:"rgba(0,0,0,0)", bordercolor:"rgba(0,0,0,0)", font:{color:"rgba(0,0,0,0)"}}};
+      const hoverNone = {hovertemplate:"", hoverinfo:"none", hoverlabel:{bgcolor:"rgba(0,0,0,0)", bordercolor:"rgba(0,0,0,0)", font:{color:"rgba(0,0,0,0)"}}};
 
       traces.push({type:"scattergl", mode:"lines", name:"WS_100", x:t, y:d["WS_100"], customdata: null, ...hoverNone, line:{color:axisColors.ws, width:1}, yaxis:"y", visible:isChecked("ws100")});
       traces.push({type:"scattergl", mode:"lines", name:"WS_69W", x:t, y:d["WS_69W"], customdata: null, ...hoverNone, line:{color:axisColors.ws69, width:1}, yaxis:"y", visible:isChecked("ws69")});
