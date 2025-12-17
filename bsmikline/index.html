@@ -289,16 +289,17 @@
             yArr = maCache[cfg.minutes][s.key];
           }
           const color = cfg.minutes === 10 ? s.baseColor : shadeColor(s.baseColor, cfg.shade);
+          const isMarkers = s.mode === "markers";
           traces.push({
-            type: s.mode === "markers" ? "scattergl" : "scattergl",
+            type: "scattergl",
             mode: s.mode || "lines",
             name: s.key,
             meta: {series: s.key, ma: cfg.label},
             x: t,
             y: yArr,
             yaxis: s.axis,
-            line: s.mode === "markers" ? undefined : {color, width:1},
-            marker: s.marker ? {...s.marker, color} : undefined,
+            line: isMarkers ? undefined : {color, width:1},
+            marker: isMarkers ? (s.marker ? {...s.marker, color} : {color}) : {color:"rgba(0,0,0,0)"},
             visible: true,
             ...hoverNone
           });
