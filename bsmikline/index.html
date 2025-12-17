@@ -234,6 +234,46 @@
       return res;
     }
 
+    function computeMACircular(degSeries, times, windowMin) {
+      if (!degSeries || !degSeries.length) return [];
+      const stepMin = times.length>1 ? (times[1]-times[0])/(1000*60) : 1;
+      let winCount = Math.max(1, Math.round(windowMin / Math.max(stepMin,1)));
+      if (winCount < 1) winCount = 1;
+      const res = [];
+      const queue = [];
+      let sinSum = 0;
+      let cosSum = 0;
+      let count = 0;
+      for (let i=0;i<degSeries.length;i++){
+        const v = degSeries[i];
+        queue.push(v);
+        if (v!==null && !Number.isNaN(v)) {
+          const rad = v * Math.PI/180;
+          sinSum += Math.sin(rad);
+          cosSum += Math.cos(rad);
+          count += 1;
+        }
+        if (queue.length > winCount) {
+          const old = queue.shift();
+          if (old!==null && !Number.isNaN(old)) {
+            const radOld = old * Math.PI/180;
+            sinSum -= Math.sin(radOld);
+            cosSum -= Math.cos(radOld);
+            count -= 1;
+          }
+        }
+        if (count === 0) {
+          res.push(null);
+        } else {
+          const meanRad = Math.atan2(sinSum/count, cosSum/count);
+          let deg = meanRad * 180 / Math.PI;
+          if (deg < 0) deg += 360;
+          res.push(deg);
+        }
+      }
+      return res;
+    }
+
     function shadeColor(hex, factor) {
       const h = hex.replace("#","").padEnd(6,"0");
       const r = Math.round(parseInt(h.substring(0,2),16) * factor);
@@ -282,11 +322,11 @@
       const traces = [];
       const hoverNone = {hovertemplate:"", hoverinfo:"none", hoverlabel:{bgcolor:"rgba(0,0,0,0)", bordercolor:"rgba(0,0,0,0)", font:{color:"rgba(0,0,0,0)"}}};
       const seriesList = [
-        {chk:"ws100", key:"WS_100", baseColor:axisColors.ws, axis:"y"},
-        {chk:"ws69", key:"WS_69W", baseColor:axisColors.ws69, axis:"y"},
-        {chk:"ws38", key:"WS_38W", baseColor:axisColors.ws38, axis:"y"},
-        {chk:"wd97", key:"WD_97", baseColor:axisColors.wd, axis:"y4", transform:breakDirection},
-        {chk:"wd35", key:"WD_35", baseColor:axisColors.wd35, axis:"y4", transform:breakDirection},
+        {chk:"ws100", key:"WS_100", baseColor:axisColors.ws, axis:"y", isDir:false},
+        {chk:"ws69", key:"WS_69W", baseColor:axisColors.ws69, axis:"y", isDir:false},
+        {chk:"ws38", key:"WS_38W", baseColor:axisColors.ws38, axis:"y", isDir:false},
+        {chk:"wd97", key:"WD_97", baseColor:axisColors.wd, axis:"y4", isDir:true},
+        {chk:"wd35", key:"WD_35", baseColor:axisColors.wd35, axis:"y4", isDir:true},
         {chk:"at", key:"AT_95", baseColor:axisColors.at, axis:"y5"},
         {chk:"rh", key:"RH_95", baseColor:axisColors.rh, axis:"y2"},
         {chk:"bp", key:"BP_93", baseColor:axisColors.bp, axis:"y3"},
@@ -304,14 +344,14 @@
           if (!base) return;
           let yArr;
           if (cfg.minutes === 10) {
-            yArr = s.transform ? s.transform(base) : base;
+            yArr = s.isDir ? breakDirection(base) : base;
           } else {
             if (!maCache[cfg.minutes]) maCache[cfg.minutes] = {};
             if (!maCache[cfg.minutes][s.key]) {
-              const raw = s.transform ? s.transform(base) : base;
-              maCache[cfg.minutes][s.key] = computeMA(raw, t, cfg.minutes);
+              const raw = base;
+              maCache[cfg.minutes][s.key] = s.isDir ? computeMACircular(raw, t, cfg.minutes) : computeMA(raw, t, cfg.minutes);
             }
-            yArr = maCache[cfg.minutes][s.key];
+            yArr = s.isDir ? breakDirection(maCache[cfg.minutes][s.key]) : maCache[cfg.minutes][s.key];
           }
           const {color, dash, width} = maStyle(cfg.label, s.baseColor);
           const isMarkers = s.mode === "markers";
