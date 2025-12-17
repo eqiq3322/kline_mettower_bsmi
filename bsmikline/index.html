@@ -243,6 +243,31 @@
       return "#" + clamp(r).toString(16).padStart(2,"0") + clamp(g).toString(16).padStart(2,"0") + clamp(b).toString(16).padStart(2,"0");
     }
 
+    function mixWithWhite(hex, ratio) {
+      const h = hex.replace("#","").padEnd(6,"0");
+      const r = parseInt(h.substring(0,2),16);
+      const g = parseInt(h.substring(2,4),16);
+      const b = parseInt(h.substring(4,6),16);
+      const mix = (v) => Math.round(v + (255 - v) * ratio);
+      return "#" + mix(r).toString(16).padStart(2,"0") + mix(g).toString(16).padStart(2,"0") + mix(b).toString(16).padStart(2,"0");
+    }
+
+    function invertColor(hex) {
+      const h = hex.replace("#","").padEnd(6,"0");
+      const r = 255 - parseInt(h.substring(0,2),16);
+      const g = 255 - parseInt(h.substring(2,4),16);
+      const b = 255 - parseInt(h.substring(4,6),16);
+      return "#" + r.toString(16).padStart(2,"0") + g.toString(16).padStart(2,"0") + b.toString(16).padStart(2,"0");
+    }
+
+    function maStyle(maLabel, baseColor) {
+      if (maLabel === "MA_10min") return {color: baseColor, dash:"solid", width:1};
+      if (maLabel === "MA_1h") return {color: mixWithWhite(baseColor, 0.25), dash:"dash", width:1.2};
+      if (maLabel === "MA_6h") return {color: invertColor(baseColor), dash:"dot", width:1.2};
+      if (maLabel === "MA_1mo") return {color: shadeColor(baseColor, 0.6), dash:"longdash", width:1.2};
+      return {color: baseColor, dash:"solid", width:1};
+    }
+
     function buildCustomData(series, stats, maArr) {
       const out = [];
       for (let i=0;i<series.length;i++){
@@ -270,7 +295,7 @@
       ];
 
       const selectedMas = maConfigs.filter(cfg => isChecked(cfg.chk));
-      const selectedSeries = seriesList.filter(s => isChecked(s.chk));
+      const selectedSeries = seriesList.filter(s => isChecked(s.chk) && !["TI_10min","GustFactor"].includes(s.key));
       const maCache = {};
 
       selectedMas.forEach(cfg => {
@@ -288,7 +313,7 @@
             }
             yArr = maCache[cfg.minutes][s.key];
           }
-          const color = cfg.minutes === 10 ? s.baseColor : shadeColor(s.baseColor, cfg.shade);
+          const {color, dash, width} = maStyle(cfg.label, s.baseColor);
           const isMarkers = s.mode === "markers";
           traces.push({
             type: "scattergl",
@@ -298,13 +323,45 @@
             x: t,
             y: yArr,
             yaxis: s.axis,
-            line: isMarkers ? undefined : {color, width:1},
+            line: isMarkers ? undefined : {color, width, dash},
             marker: isMarkers ? (s.marker ? {...s.marker, color} : {color}) : {color:"rgba(0,0,0,0)"},
             visible: true,
             ...hoverNone
           });
         });
       });
+
+      // TI 和 GustFactor 固定定義，只畫一次不跟隨 MA
+      const ti = seriesList.find(s => s.key === "TI_10min");
+      const gf = seriesList.find(s => s.key === "GustFactor");
+      if (ti && isChecked(ti.chk)) {
+        traces.push({
+          type:"scattergl",
+          mode:"lines",
+          name: ti.key,
+          meta:{series:ti.key, ma:"raw"},
+          x:t,
+          y:d[ti.key],
+          yaxis: ti.axis,
+          line:{color:ti.baseColor, width:1, dash:"dot"},
+          visible:true,
+          ...hoverNone
+        });
+      }
+      if (gf && isChecked(gf.chk)) {
+        traces.push({
+          type:"scattergl",
+          mode:"markers",
+          name: gf.key,
+          meta:{series:gf.key, ma:"raw"},
+          x:t,
+          y:d[gf.key],
+          yaxis: gf.axis,
+          marker:{color:gf.baseColor, size:3},
+          visible:true,
+          ...hoverNone
+        });
+      }
 
       return traces;
     }
