@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BSMI K-Line Viewer</title>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <style>
+    html, body { height: 100%; }
+    body {
+      font-family: "Times New Roman", serif;
+      margin: 0;
+      padding: 0;
+      background: #000;
+      color: #e0e0e0;
+    }
+    #app {
+      width: 100vw;
+      height: 66.67vh;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #333;
+      box-sizing: border-box;
+    }
+    #controls { padding: 10px; border-bottom: 1px solid #444; background: #111; }
+    .section { margin-bottom: 8px; }
+    #chart { width: 100%; flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; }
+    label { margin-right: 10px; }
+    .color-dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-left:4px; vertical-align:middle; }
+    #hoverPanel {
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      z-index: 30;
+      min-width: 520px;
+      max-width: 760px;
+      border: 1px solid #555;
+      background: rgba(0, 0, 0, 0.9);
+      color: #e0e0e0;
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.4;
+      white-space: pre;
+      font-family: Consolas, "Courier New", monospace;
+      pointer-events: none;
+    }
+    #hoverPanel .title { color: #aaa; margin-bottom: 4px; }
+    #hoverPanel .content { display: flex; gap: 12px; align-items: flex-start; }
+    #hoverPanel .col { margin: 0; }
+    #hoverPanel .left { min-width: 320px; }
+    #hoverPanel .right { min-width: 220px; }
+    #chart .hoverlayer { display: none !important; }
+    .crosshair-line {
+      position: absolute;
+      pointer-events: none;
+      z-index: 20;
+      display: none;
+    }
+    .crosshair-v {
+      width: 0;
+      border-left: 1px dashed #888;
+    }
+    .crosshair-h {
+      height: 0;
+      border-top: 1px dashed #888;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="controls">
+      <div class="section">
+        <label>BSMI Month:</label>
+        <select id="monthSelect"></select>
+        <span id="status"></span>
+      </div>
+      <div class="section">
+        <div>
+          <strong>Time averages:</strong>
+          <label><input type="checkbox" class="toggle" data-trace="ma10" checked> MA_10min</label>
+          <label><input type="checkbox" class="toggle" data-trace="ma1h"> MA_1h</label>
+          <label><input type="checkbox" class="toggle" data-trace="ma6h"> MA_6h</label>
+          <label><input type="checkbox" class="toggle" data-trace="ma1mo"> MA_1mo</label>
+        </div>
+        <div style="margin-top:6px;">
+          <strong>Series:</strong>
+          <label><input type="checkbox" class="toggle" data-trace="ws100" checked> <span class="color-dot" style="background:#1B4F9A"></span> WS_100</label>
+          <label><input type="checkbox" class="toggle" data-trace="ws69"> <span class="color-dot" style="background:#2E86DE"></span> WS_69W</label>
+          <label><input type="checkbox" class="toggle" data-trace="ws38"> <span class="color-dot" style="background:#85C1E9"></span> WS_38W</label>
+          <label><input type="checkbox" class="toggle" data-trace="wd97" checked> <span class="color-dot" style="background:#D68910"></span> WD_97</label>
+          <label><input type="checkbox" class="toggle" data-trace="wd35"> <span class="color-dot" style="background:#F8C471"></span> WD_35</label>
+          <label><input type="checkbox" class="toggle" data-trace="at"> <span class="color-dot" style="background:#E74C3C"></span> AT_95</label>
+          <label><input type="checkbox" class="toggle" data-trace="rh"> <span class="color-dot" style="background:#AF7AC5"></span> RH_95</label>
+          <label><input type="checkbox" class="toggle" data-trace="bp"> <span class="color-dot" style="background:#58D68D"></span> BP_93</label>
+          <label><input type="checkbox" class="toggle" data-trace="ti"> <span class="color-dot" style="background:#F1C40F"></span> TI_10min</label>
+          <label><input type="checkbox" class="toggle" data-trace="gust"> <span class="color-dot" style="background:#EC7063"></span> GustFactor</label>
+        </div>
+      </div>
+    </div>
+    <div id="chart"></div>
+  </div>
+  <div id="hoverPanel"><div class="title">Hover Info</div>Move cursor on chart...</div>
+
+  <script>
+    const fallbackMonths = ["201603","201604","201605","201606","201607","201608","201609","201610","201611","201612","201701","201702","201703","201704","201705","201706","201707","201708","201709","201710","201711","201712","201801","201802","201803","201804","201805","201806","201807","201808","201809","201810","201811","201812","201901","201902","201903","201904","201905","201906","201907","201908","201909","201910","201911","201912","202001","202002","202003","202004","202005","202006","202007","202008","202009","202010","202011","202012","202101","202102","202103","202104","202105","202106","202107","202108","202109","202110","202111","202112","202201","202202","202203","202204","202205","202206","202207","202208","202209","202210","202211","202301","202302","202303","202304","202305","202306","202307","202308","202309","202310","202311","202312","202401","202402","202403","202404","202405","202406","202407","202408","202409","202410","202411","202412","202501","202502","202503"];
+    let months = [...fallbackMonths]; // fallback
+    const cache = {};
+    let currentData = null;
+    let ws100HoverStats = [];
+    const aggBase = "../DATA/bsmikline/agg";
+
+    const axisColors = {
+      ws100: "#1B4F9A",
+      ws69: "#2E86DE",
+      ws38: "#85C1E9",
+      ma10: "#2ca02c",
+      ma1h: "#ff7f0e",
+      ma6h: "#9467bd",
+      ma1m: "#17becf",
+      rh: "#AF7AC5",
+      bp: "#58D68D",
+      wd97: "#D68910",
+      wd35: "#F8C471",
+      at: "#E74C3C",
+      ti: "#F1C40F",
+      gust: "#EC7063"
+    };
+
+    async function buildMonthOptions() {
+      const sel = document.getElementById("monthSelect");
+      sel.innerHTML = "";
+      months.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        sel.appendChild(opt);
+      });
+      sel.value = months[0];
+    }
+
+    function setStatus(msg) {
+      document.getElementById("status").textContent = msg;
+    }
+
+    async function loadMonth(month) {
+      if (cache[month]) return cache[month];
+      setStatus("Loading " + month + "...");
+      const url = `${aggBase}/BSMI${month}.csv`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        throw new Error("Failed to load " + url);
+      }
+      const text = await resp.text();
+      const rows = text.trim().split(/\r?\n/);
+      const header = rows.shift().split(",");
+      const data = header.reduce((acc, h) => { acc[h] = []; return acc; }, {});
+      rows.forEach(line => {
+        const cols = line.split(",");
+        header.forEach((h, i) => data[h].push(cols[i] === "" ? null : (h === "TIMESTAMP" ? new Date(cols[i]) : parseFloat(cols[i]))));
+      });
+      cache[month] = data;
+      setStatus("");
+      return data;
+    }
+
+    function breakDirection(dir) {
+      const out = [];
+      for (let i = 0; i < dir.length; i++) {
+        if (i === 0) { out.push(dir[i]); continue; }
+        const prev = dir[i-1], cur = dir[i];
+        if (prev == null || cur == null) { out.push(null); continue; }
+        const diff = Math.abs(cur - prev);
+        if (diff > 180) out.push(null);
+        out.push(cur);
+      }
+      return out;
+    }
+
+    function statsFor(series) {
+      const vals = series.filter(v => v !== null && !Number.isNaN(v));
+      if (!vals.length) return null;
+      vals.sort((a,b) => a-b);
+      const q = p => {
+        const idx = (vals.length - 1) * p;
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        if (lo === hi) return vals[lo];
+        return vals[lo] * (hi - idx) + vals[hi] * (idx - lo);
+      };
+      return {min: vals[0], q1: q(0.25), med: q(0.5), q3: q(0.75), max: vals[vals.length-1]};
+    }
+
+    function attachStats(series, stats) {
+      if (!stats) return null;
+      return Array(series.length).fill([stats.min, stats.q1, stats.med, stats.q3, stats.max]);
+    }
+
+    function isChecked(key) {
+      const el = document.querySelector(`.toggle[data-trace='${key}']`);
+      return el ? el.checked : false;
+    }
+
+    function getActiveWindowMinutes() {
+      const order = [
+        {chk:"ma10", minutes:10},
+        {chk:"ma1h", minutes:60},
+        {chk:"ma6h", minutes:360},
+        {chk:"ma1mo", minutes:30*24*60},
+      ];
+      for (const item of order) {
+        const el = document.querySelector(`.toggle[data-trace='${item.chk}']`);
+        if (el && el.checked) return item.minutes;
+      }
+      return 10;
+    }
+
+    function hasAnyMASelected() {
+      return isChecked("ma10") || isChecked("ma1h") || isChecked("ma6h") || isChecked("ma1mo");
+    }
+
+    function quantiles(arr) {
+      if (!arr.length) return [null,null,null,null,null];
+      const sorted = [...arr].sort((a,b)=>a-b);
+      const q = p => {
+        const idx = (sorted.length - 1) * p;
+        const lo = Math.floor(idx), hi = Math.ceil(idx);
+        if (lo === hi) return sorted[lo];
+        return sorted[lo]*(hi-idx)+sorted[hi]*(idx-lo);
+      };
+      return [sorted[0], q(0.25), q(0.5), q(0.75), sorted[sorted.length-1]];
+    }
+
+    function rollingStats(series, times, windowMin) {
+      const res = {min:[], q1:[], med:[], q3:[], max:[]};
+      if (!series || !series.length) return res;
+      const stepMin = times.length>1 ? (times[1]-times[0])/(1000*60) : 1;
+      let winCount = Math.max(1, Math.round(windowMin / Math.max(stepMin,1)));
+      if (winCount > 1000) winCount = 1000; // avoid heavy windows
+      for (let i=0;i<series.length;i++){
+        const start = Math.max(0, i - winCount + 1);
+        const slice = [];
+        for (let j=start;j<=i;j++){
+          const v = series[j];
+          if (v!==null && !Number.isNaN(v)) slice.push(v);
+        }
+        const [mn,q1,med,q3,mx] = quantiles(slice);
+        res.min.push(mn); res.q1.push(q1); res.med.push(med); res.q3.push(q3); res.max.push(mx);
+      }
+      return res;
+    }
+
+    function buildCustomData(series, stats, maArr) {
+      const out = [];
+      for (let i=0;i<series.length;i++){
+        const val = (maArr && maArr[i]!==undefined) ? maArr[i] : series[i];
+        out.push([val, stats.min[i], stats.q1[i], stats.med[i], stats.q3[i], stats.max[i]]);
+      }
+      return out;
+    }
+
+    function makeTraces(d) {
+      const t = d["TIMESTAMP"];
+      const traces = [];
+      const maEnabled = hasAnyMASelected();
+      const activeWinMin = getActiveWindowMinutes();
+      const stats100 = rollingStats(d["WS_100"], t, activeWinMin);
+      const stats69 = rollingStats(d["WS_69W"], t, activeWinMin);
+      const stats38 = rollingStats(d["WS_38W"], t, activeWinMin);
+
+      const maMap = {};
+      maMap[10] = d["MA_10min"];
+      maMap[60] = d["MA_1h"];
+      maMap[360] = d["MA_6h"];
+      maMap[30 * 24 * 60] = d["MA_1mo"];
+      const activeMA = maMap[activeWinMin] || d["MA_10min"];
+
+      const maDefs = [
+        ["MA_10min","MA 10min","ma10","ma10"],
+        ["MA_1h","MA 1h","ma1h","ma1h"],
+        ["MA_6h","MA 6h","ma6h","ma6h"],
+        ["MA_1mo","MA 1mo","ma1m","ma1mo"],
+      ];
+      maDefs.forEach(([col,label,colorKey,toggleKey]) => {
+        if (!d[col]) return;
+        traces.push({
+          type: "scattergl",
+          mode: "lines",
+          name: label,
+          x: t,
+          y: d[col],
+          hoverinfo:"skip",
+          line: {color: axisColors[colorKey], width: 1.5},
+          yaxis: "y",
+          visible: maEnabled && isChecked(toggleKey)
+        });
+      });
+
+      const cd100 = buildCustomData(d["WS_100"], stats100, activeMA);
+      const cd69 = buildCustomData(d["WS_69W"], stats69, activeMA);
+      const cd38 = buildCustomData(d["WS_38W"], stats38, activeMA);
+      ws100HoverStats = cd100;
+
+      traces.push({type:"scattergl", mode:"lines", name:"WS_100", x:t, y:d["WS_100"], customdata: cd100, hovertemplate:"WS_100 MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws100, width:2}, yaxis:"y", visible:maEnabled && isChecked("ws100")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_69W", x:t, y:d["WS_69W"], customdata: cd69, hovertemplate:"WS_69W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws69, width:1}, yaxis:"y", visible:maEnabled && isChecked("ws69")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_38W", x:t, y:d["WS_38W"], customdata: cd38, hovertemplate:"WS_38W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws38, width:0.8}, opacity:0.5, yaxis:"y", visible:maEnabled && isChecked("ws38")});
+
+      traces.push({type:"scattergl", mode:"lines", name:"WD_97", x:t, y:breakDirection(d["WD_97"]), line:{color:axisColors.wd97, width:2}, yaxis:"y4", visible:maEnabled && isChecked("wd97")});
+      traces.push({type:"scattergl", mode:"lines", name:"WD_35", x:t, y:breakDirection(d["WD_35"]), line:{color:axisColors.wd35, width:1}, yaxis:"y4", visible:maEnabled && isChecked("wd35")});
+
+      traces.push({type:"scattergl", mode:"lines", name:"AT_95", x:t, y:d["AT_95"], line:{color:axisColors.at, width:2}, yaxis:"y5", visible:maEnabled && isChecked("at")});
+      traces.push({type:"scattergl", mode:"lines", name:"RH_95", x:t, y:d["RH_95"], line:{color:axisColors.rh, width:2}, yaxis:"y2", visible:maEnabled && isChecked("rh")});
+      traces.push({type:"scattergl", mode:"lines", name:"BP_93", x:t, y:d["BP_93"], line:{color:axisColors.bp, width:2}, yaxis:"y3", visible:maEnabled && isChecked("bp")});
+
+      traces.push({type:"scattergl", mode:"lines", name:"TI_10min", x:t, y:d["TI_10min"], line:{color:axisColors.ti, dash:"dot", width:2}, yaxis:"y6", visible:maEnabled && isChecked("ti"), hovertemplate:"TI_10min %{y:.3f}<extra></extra>"});
+      traces.push({type:"scattergl", mode:"markers", marker:{color:axisColors.gust, size:4}, name:"GustFactor", x:t, y:d["GustFactor"], yaxis:"y6", visible:maEnabled && isChecked("gust"), hovertemplate:"GustFactor %{y:.3f}<extra></extra>"});
+
+      return traces;
+    }
+
+    function layoutTemplate() {
+      return {
+        font: {family:"Times New Roman, serif", color:"#e0e0e0"},
+        paper_bgcolor:"#000",
+        plot_bgcolor:"#000",
+        hovermode:"x unified",
+        xaxis: {
+          title: "Time",
+          showspikes:false,
+          rangeslider:{visible:false},
+          gridcolor:"#222",
+          zerolinecolor:"#333",
+        },
+        yaxis: {
+          title: "Wind speed (m/s)",
+          domain:[0.05,0.98],
+          gridcolor:"#222",
+          zerolinecolor:"#333",
+          tickfont:{color:"#ffffff"},
+          titlefont:{color:"#ffffff"},
+          linecolor:"#ffffff",
+          showline:true
+        },
+        yaxis2: {title: "", overlaying:"y", side:"right", position:1.02, anchor:"free", showgrid:false, tickfont:{color:axisColors.rh}, titlefont:{color:axisColors.rh}, linecolor:axisColors.rh, showline:false, showticklabels:false},
+        yaxis3: {title: "", overlaying:"y", side:"right", position:1.08, anchor:"free", showgrid:false, tickfont:{color:axisColors.bp}, titlefont:{color:axisColors.bp}, linecolor:axisColors.bp, showline:false, showticklabels:false},
+        yaxis4: {title: "", overlaying:"y", side:"right", position:0, anchor:"free", range:[0,360], showgrid:false, tickfont:{color:axisColors.wd97}, titlefont:{color:axisColors.wd97}, linecolor:axisColors.wd97, showline:false, showticklabels:true, ticks:""},
+        yaxis5: {title: "", overlaying:"y", side:"right", position:1.14, anchor:"free", showgrid:false, tickfont:{color:axisColors.at}, titlefont:{color:axisColors.at}, linecolor:axisColors.at, showline:false, showticklabels:false},
+        yaxis6: {title: "", overlaying:"y", side:"right", position:1.20, anchor:"free", showgrid:false, tickfont:{color:axisColors.ti}, titlefont:{color:axisColors.ti}, linecolor:axisColors.ti, showline:false, showticklabels:false, zeroline:false},
+        showlegend: false,
+        margin: {l:60, r:220, t:30, b:30},
+      };
+    }
+
+    function formatNum(v, digits = 3) {
+      return (v === null || v === undefined || Number.isNaN(v)) ? "--" : Number(v).toFixed(digits);
+    }
+
+    function rangeFor(arr) {
+      if (!arr || !arr.length) return null;
+      let mn = Infinity;
+      let mx = -Infinity;
+      for (let i = 0; i < arr.length; i++) {
+        const v = arr[i];
+        if (v === null || Number.isNaN(v)) continue;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      if (!Number.isFinite(mn) || !Number.isFinite(mx)) return null;
+      if (mn === mx) return [mn - 1, mx + 1];
+      return [mn, mx];
+    }
+
+    function mergeRanges(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+      return [Math.min(a[0], b[0]), Math.max(a[1], b[1])];
+    }
+
+    function fmtTime(d) {
+      if (!(d instanceof Date) || Number.isNaN(d.getTime())) return "--";
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      return `${y}-${m}-${day} ${hh}:${mm}`;
+    }
+
+    function nearestIndexByTime(times, targetMs) {
+      if (!times || !times.length) return -1;
+      let lo = 0, hi = times.length - 1;
+      while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        const t = times[mid] instanceof Date ? times[mid].getTime() : new Date(times[mid]).getTime();
+        if (t < targetMs) lo = mid + 1;
+        else hi = mid;
+      }
+      const idx = lo;
+      if (idx <= 0) return 0;
+      const t1 = times[idx] instanceof Date ? times[idx].getTime() : new Date(times[idx]).getTime();
+      const t0 = times[idx - 1] instanceof Date ? times[idx - 1].getTime() : new Date(times[idx - 1]).getTime();
+      return Math.abs(t1 - targetMs) < Math.abs(targetMs - t0) ? idx : (idx - 1);
+    }
+
+    function buildHoverPanelHtmlByIndex(i) {
+      if (!currentData || i < 0) return "";
+      const d = currentData;
+      const row = (label, value, unit, digits = 3) => `${label.padEnd(12, " ")} ${formatNum(value, digits).padStart(8, " ")} ${unit}`;
+      const leftLines = [];
+      leftLines.push(fmtTime(d["TIMESTAMP"][i]));
+      leftLines.push("");
+      leftLines.push(row("WS_100", d["WS_100"][i], "m/s"));
+      leftLines.push(row("WS_69W", d["WS_69W"][i], "m/s"));
+      leftLines.push(row("WS_38W", d["WS_38W"][i], "m/s"));
+      leftLines.push(row("WD_97", d["WD_97"][i], "deg", 1));
+      leftLines.push(row("WD_35", d["WD_35"][i], "deg", 1));
+      leftLines.push(row("AT_95", d["AT_95"][i], "C", 2));
+      leftLines.push(row("RH_95", d["RH_95"][i], "%", 2));
+      leftLines.push(row("BP_93", d["BP_93"][i], "hPa", 2));
+      leftLines.push(row("TI_10min", d["TI_10min"][i], "-", 3));
+      leftLines.push(row("GustFactor", d["GustFactor"][i], "-", 3));
+
+      const rightLines = [];
+      const s = ws100HoverStats[i];
+      if (s && s.length >= 6) {
+        rightLines.push("WS_100 Stats");
+        rightLines.push("");
+        rightLines.push(row("MA", s[0], "m/s"));
+        rightLines.push(row("min", s[1], "m/s"));
+        rightLines.push(row("q1", s[2], "m/s"));
+        rightLines.push(row("med", s[3], "m/s"));
+        rightLines.push(row("q3", s[4], "m/s"));
+        rightLines.push(row("max", s[5], "m/s"));
+      }
+      return `<div class="content"><pre class="col left">${leftLines.join("\n")}</pre><pre class="col right">${rightLines.join("\n")}</pre></div>`;
+    }
+
+    function updateRightAxisDisplay() {
+      const maEnabled = hasAnyMASelected();
+      const rhOn = isChecked("rh");
+      const bpOn = isChecked("bp");
+      const atOn = isChecked("at");
+      const tiOn = isChecked("ti");
+      const gustOn = isChecked("gust");
+      const wdOn = isChecked("wd97") || isChecked("wd35");
+
+      const rhRange = rhOn ? rangeFor(currentData && currentData["RH_95"]) : null;
+      const bpRange = bpOn ? rangeFor(currentData && currentData["BP_93"]) : null;
+      const atRange = atOn ? rangeFor(currentData && currentData["AT_95"]) : null;
+      const tiRange = tiOn ? rangeFor(currentData && currentData["TI_10min"]) : null;
+      const gustRange = gustOn ? rangeFor(currentData && currentData["GustFactor"]) : null;
+      const tiGustRange = mergeRanges(tiRange, gustRange);
+
+      const panelVisible = {
+        "yaxis2.showline": maEnabled && rhOn,
+        "yaxis2.showticklabels": maEnabled && rhOn,
+        "yaxis3.showline": maEnabled && bpOn,
+        "yaxis3.showticklabels": maEnabled && bpOn,
+        "yaxis4.showline": false,
+        "yaxis4.showticklabels": maEnabled && wdOn,
+        "yaxis5.showline": maEnabled && atOn,
+        "yaxis5.showticklabels": maEnabled && atOn,
+        "yaxis6.showline": maEnabled && (tiOn || gustOn),
+        "yaxis6.showticklabels": maEnabled && (tiOn || gustOn),
+        annotations: []
+      };
+      if (rhRange) panelVisible["yaxis2.range"] = rhRange;
+      else panelVisible["yaxis2.autorange"] = true;
+      if (bpRange) panelVisible["yaxis3.range"] = bpRange;
+      else panelVisible["yaxis3.autorange"] = true;
+      if (atRange) panelVisible["yaxis5.range"] = atRange;
+      else panelVisible["yaxis5.autorange"] = true;
+      if (tiGustRange) panelVisible["yaxis6.range"] = tiGustRange;
+      else panelVisible["yaxis6.autorange"] = true;
+      Plotly.relayout("chart", panelVisible);
+    }
+
+    function updateHoverPanel(text) {
+      const panel = document.getElementById("hoverPanel");
+      if (!panel) return;
+      if (!text) {
+        panel.innerHTML = '<div class="title">Hover Info</div>Move cursor on chart...';
+        return;
+      }
+      panel.innerHTML = `<div class="title">Hover Info</div>${text}`;
+    }
+
+    function bindCrosshair() {
+      const plot = document.getElementById("chart");
+      if (!plot) return;
+      if (typeof plot.__crosshairCleanup === "function") {
+        plot.__crosshairCleanup();
+      }
+
+      let vLine = plot.querySelector(".crosshair-v");
+      if (!vLine) {
+        vLine = document.createElement("div");
+        vLine.className = "crosshair-line crosshair-v";
+        plot.appendChild(vLine);
+      }
+      let hLine = plot.querySelector(".crosshair-h");
+      if (!hLine) {
+        hLine = document.createElement("div");
+        hLine.className = "crosshair-line crosshair-h";
+        plot.appendChild(hLine);
+      }
+
+      const hide = () => {
+        vLine.style.display = "none";
+        hLine.style.display = "none";
+      };
+
+      const onMove = (e) => {
+        const drag = plot.querySelector(".nsewdrag");
+        if (!drag) {
+          hide();
+          return;
+        }
+        const dragRect = drag.getBoundingClientRect();
+        const inDrag = e.clientX >= dragRect.left && e.clientX <= dragRect.right &&
+                       e.clientY >= dragRect.top && e.clientY <= dragRect.bottom;
+        if (!inDrag) {
+          hide();
+          return;
+        }
+
+        const plotRect = plot.getBoundingClientRect();
+        const localX = e.clientX - plotRect.left;
+        const localY = e.clientY - plotRect.top;
+        const dragLeft = dragRect.left - plotRect.left;
+        const dragTop = dragRect.top - plotRect.top;
+
+        vLine.style.left = `${localX}px`;
+        vLine.style.top = `${dragTop}px`;
+        vLine.style.height = `${dragRect.height}px`;
+        vLine.style.display = "block";
+
+        hLine.style.left = `${dragLeft}px`;
+        hLine.style.top = `${localY}px`;
+        hLine.style.width = `${dragRect.width}px`;
+        hLine.style.display = "block";
+
+        const xa = plot._fullLayout && plot._fullLayout.xaxis;
+        const tArr = currentData && currentData["TIMESTAMP"];
+        if (!xa || !xa.range || !tArr || !tArr.length) return;
+        const ratio = (e.clientX - dragRect.left) / dragRect.width;
+        const clamped = Math.max(0, Math.min(1, ratio));
+        const start = new Date(xa.range[0]).getTime();
+        const end = new Date(xa.range[1]).getTime();
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+        const targetMs = start + (end - start) * clamped;
+        const idx = nearestIndexByTime(tArr, targetMs);
+        updateHoverPanel(buildHoverPanelHtmlByIndex(idx));
+      };
+
+      const onLeave = () => {
+        hide();
+        updateHoverPanel("");
+      };
+      plot.addEventListener("mousemove", onMove);
+      plot.addEventListener("mouseleave", onLeave);
+      plot.__crosshairCleanup = () => {
+        plot.removeEventListener("mousemove", onMove);
+        plot.removeEventListener("mouseleave", onLeave);
+      };
+    }
+
+    async function render(month) {
+      try {
+        const data = await loadMonth(month);
+        currentData = data;
+        const n = (data["WS_100"] || []).filter(v => v !== null && !Number.isNaN(v)).length;
+        const traces = makeTraces(data);
+        await Plotly.newPlot("chart", traces, layoutTemplate(), {responsive:true, displaylogo:false});
+        bindCrosshair();
+        updateRightAxisDisplay();
+        setStatus(`Loaded ${month} (${n} points)`);
+        bindToggles(traces);
+      } catch (err) {
+        console.error(err);
+        setStatus("Error: " + err.message);
+      }
+    }
+
+    function bindToggles(traces) {
+      const nameToIdx = {};
+      traces.forEach((tr, i) => {
+        if (!nameToIdx[tr.name]) nameToIdx[tr.name] = [];
+        nameToIdx[tr.name].push(i);
+      });
+      const mapping = {
+        ma10: ["MA 10min"],
+        ma1h: ["MA 1h"],
+        ma6h: ["MA 6h"],
+        ma1mo: ["MA 1mo"],
+        ws100: ["WS_100"],
+        ws69: ["WS_69W"],
+        ws38: ["WS_38W"],
+        wd97: ["WD_97"],
+        wd35: ["WD_35"],
+        at: ["AT_95"],
+        rh: ["RH_95"],
+        bp: ["BP_93"],
+        ti: ["TI_10min"],
+        gust: ["GustFactor"],
+      };
+      document.querySelectorAll('.toggle').forEach(cb => {
+        cb.onchange = () => {
+          if (["ma10","ma1h","ma6h","ma1mo"].includes(cb.dataset.trace)) {
+            const current = document.getElementById("monthSelect").value;
+            render(current);
+            return;
+          }
+          const names = mapping[cb.dataset.trace] || [];
+          const visibility = (hasAnyMASelected() && cb.checked) ? true : "legendonly";
+          names.forEach(name => {
+            (nameToIdx[name] || []).forEach(i => Plotly.restyle("chart", {visible: visibility}, i));
+          });
+          updateRightAxisDisplay();
+        };
+      });
+    }
+
+    document.getElementById("monthSelect").onchange = (e) => {
+      render(e.target.value);
+    };
+
+    async function init() {
+      try {
+        const resp = await fetch(`${aggBase}/months.json`);
+        if (resp.ok) {
+          const list = await resp.json();
+          if (Array.isArray(list) && list.length) months = list;
+        } else {
+          console.warn("months.json load failed, using fallback");
+        }
+      } catch(e) {
+        console.warn("months.json fetch error, using fallback", e);
+      }
+      await buildMonthOptions();
+      render(months[0]);
+    }
+
+    init();
+  </script>
+</body>
+</html>
