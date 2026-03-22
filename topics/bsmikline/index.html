@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -106,7 +106,9 @@
     const cache = {};
     let currentData = null;
     let ws100HoverStats = [];
-    const aggBase = "../DATA/bsmikline/agg";
+    let ws100DisplaySeries = [];
+    let displaySeries = {};
+    const aggBase = "./agg";
 
     const axisColors = {
       ws100: "#1B4F9A",
@@ -125,16 +127,18 @@
       gust: "#EC7063"
     };
 
-    async function buildMonthOptions() {
+    async function buildMonthOptions(selectedMonth = null) {
       const sel = document.getElementById("monthSelect");
       sel.innerHTML = "";
-      months.forEach(m => {
+      const ordered = [...months];
+      const picked = (selectedMonth && ordered.includes(selectedMonth)) ? selectedMonth : ordered[0];
+      ordered.forEach(m => {
         const opt = document.createElement("option");
         opt.value = m;
         opt.textContent = m;
         sel.appendChild(opt);
       });
-      sel.value = months[0];
+      sel.value = picked;
     }
 
     function setStatus(msg) {
@@ -247,6 +251,59 @@
       return res;
     }
 
+    function rollingMean(series, times, windowMin) {
+      const out = [];
+      if (!series || !series.length) return out;
+      const stepMin = times.length > 1 ? (times[1] - times[0]) / (1000 * 60) : 1;
+      let winCount = Math.max(1, Math.round(windowMin / Math.max(stepMin, 1)));
+      if (winCount > 1000) winCount = 1000;
+      for (let i = 0; i < series.length; i++) {
+        const start = Math.max(0, i - winCount + 1);
+        let sum = 0;
+        let count = 0;
+        for (let j = start; j <= i; j++) {
+          const v = series[j];
+          if (v !== null && !Number.isNaN(v)) {
+            sum += v;
+            count += 1;
+          }
+        }
+        out.push(count ? sum / count : null);
+      }
+      return out;
+    }
+
+    function rollingCircularMean(series, times, windowMin) {
+      const out = [];
+      if (!series || !series.length) return out;
+      const stepMin = times.length > 1 ? (times[1] - times[0]) / (1000 * 60) : 1;
+      let winCount = Math.max(1, Math.round(windowMin / Math.max(stepMin, 1)));
+      if (winCount > 1000) winCount = 1000;
+      for (let i = 0; i < series.length; i++) {
+        const start = Math.max(0, i - winCount + 1);
+        let sumSin = 0;
+        let sumCos = 0;
+        let count = 0;
+        for (let j = start; j <= i; j++) {
+          const v = series[j];
+          if (v !== null && !Number.isNaN(v)) {
+            const rad = v * Math.PI / 180;
+            sumSin += Math.sin(rad);
+            sumCos += Math.cos(rad);
+            count += 1;
+          }
+        }
+        if (!count) {
+          out.push(null);
+          continue;
+        }
+        let deg = Math.atan2(sumSin / count, sumCos / count) * 180 / Math.PI;
+        if (deg < 0) deg += 360;
+        out.push(deg);
+      }
+      return out;
+    }
+
     function buildCustomData(series, stats, maArr) {
       const out = [];
       for (let i=0;i<series.length;i++){
@@ -271,9 +328,21 @@
       maMap[360] = d["MA_6h"];
       maMap[30 * 24 * 60] = d["MA_1mo"];
       const activeMA = maMap[activeWinMin] || d["MA_10min"];
+      displaySeries = {
+        WS_100: activeMA || rollingMean(d["WS_100"], t, activeWinMin),
+        WS_69W: rollingMean(d["WS_69W"], t, activeWinMin),
+        WS_38W: rollingMean(d["WS_38W"], t, activeWinMin),
+        WD_97: rollingCircularMean(d["WD_97"], t, activeWinMin),
+        WD_35: rollingCircularMean(d["WD_35"], t, activeWinMin),
+        AT_95: rollingMean(d["AT_95"], t, activeWinMin),
+        RH_95: rollingMean(d["RH_95"], t, activeWinMin),
+        BP_93: rollingMean(d["BP_93"], t, activeWinMin),
+        TI_10min: rollingMean(d["TI_10min"], t, activeWinMin),
+        GustFactor: rollingMean(d["GustFactor"], t, activeWinMin),
+      };
+      ws100DisplaySeries = displaySeries.WS_100;
 
       const maDefs = [
-        ["MA_10min","MA 10min","ma10","ma10"],
         ["MA_1h","MA 1h","ma1h","ma1h"],
         ["MA_6h","MA 6h","ma6h","ma6h"],
         ["MA_1mo","MA 1mo","ma1m","ma1mo"],
@@ -298,19 +367,19 @@
       const cd38 = buildCustomData(d["WS_38W"], stats38, activeMA);
       ws100HoverStats = cd100;
 
-      traces.push({type:"scattergl", mode:"lines", name:"WS_100", x:t, y:d["WS_100"], customdata: cd100, hovertemplate:"WS_100 MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws100, width:2}, yaxis:"y", visible:maEnabled && isChecked("ws100")});
-      traces.push({type:"scattergl", mode:"lines", name:"WS_69W", x:t, y:d["WS_69W"], customdata: cd69, hovertemplate:"WS_69W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws69, width:1}, yaxis:"y", visible:maEnabled && isChecked("ws69")});
-      traces.push({type:"scattergl", mode:"lines", name:"WS_38W", x:t, y:d["WS_38W"], customdata: cd38, hovertemplate:"WS_38W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws38, width:0.8}, opacity:0.5, yaxis:"y", visible:maEnabled && isChecked("ws38")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_100", x:t, y:displaySeries.WS_100, customdata: cd100, hovertemplate:"WS_100 MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws100, width:2}, yaxis:"y", visible:maEnabled && isChecked("ws100")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_69W", x:t, y:displaySeries.WS_69W, customdata: cd69, hovertemplate:"WS_69W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws69, width:1}, yaxis:"y", visible:maEnabled && isChecked("ws69")});
+      traces.push({type:"scattergl", mode:"lines", name:"WS_38W", x:t, y:displaySeries.WS_38W, customdata: cd38, hovertemplate:"WS_38W MA %{customdata[0]:.3f}<br>min %{customdata[1]:.3f}<br>q1 %{customdata[2]:.3f}<br>median %{customdata[3]:.3f}<br>q3 %{customdata[4]:.3f}<br>max %{customdata[5]:.3f}<extra></extra>", line:{color:axisColors.ws38, width:0.8}, opacity:0.5, yaxis:"y", visible:maEnabled && isChecked("ws38")});
 
-      traces.push({type:"scattergl", mode:"lines", name:"WD_97", x:t, y:breakDirection(d["WD_97"]), line:{color:axisColors.wd97, width:2}, yaxis:"y4", visible:maEnabled && isChecked("wd97")});
-      traces.push({type:"scattergl", mode:"lines", name:"WD_35", x:t, y:breakDirection(d["WD_35"]), line:{color:axisColors.wd35, width:1}, yaxis:"y4", visible:maEnabled && isChecked("wd35")});
+      traces.push({type:"scattergl", mode:"lines", name:"WD_97", x:t, y:breakDirection(displaySeries.WD_97), line:{color:axisColors.wd97, width:2}, yaxis:"y4", visible:maEnabled && isChecked("wd97")});
+      traces.push({type:"scattergl", mode:"lines", name:"WD_35", x:t, y:breakDirection(displaySeries.WD_35), line:{color:axisColors.wd35, width:1}, yaxis:"y4", visible:maEnabled && isChecked("wd35")});
 
-      traces.push({type:"scattergl", mode:"lines", name:"AT_95", x:t, y:d["AT_95"], line:{color:axisColors.at, width:2}, yaxis:"y5", visible:maEnabled && isChecked("at")});
-      traces.push({type:"scattergl", mode:"lines", name:"RH_95", x:t, y:d["RH_95"], line:{color:axisColors.rh, width:2}, yaxis:"y2", visible:maEnabled && isChecked("rh")});
-      traces.push({type:"scattergl", mode:"lines", name:"BP_93", x:t, y:d["BP_93"], line:{color:axisColors.bp, width:2}, yaxis:"y3", visible:maEnabled && isChecked("bp")});
+      traces.push({type:"scattergl", mode:"lines", name:"AT_95", x:t, y:displaySeries.AT_95, line:{color:axisColors.at, width:2}, yaxis:"y5", visible:maEnabled && isChecked("at")});
+      traces.push({type:"scattergl", mode:"lines", name:"RH_95", x:t, y:displaySeries.RH_95, line:{color:axisColors.rh, width:2}, yaxis:"y2", visible:maEnabled && isChecked("rh")});
+      traces.push({type:"scattergl", mode:"lines", name:"BP_93", x:t, y:displaySeries.BP_93, line:{color:axisColors.bp, width:2}, yaxis:"y3", visible:maEnabled && isChecked("bp")});
 
-      traces.push({type:"scattergl", mode:"lines", name:"TI_10min", x:t, y:d["TI_10min"], line:{color:axisColors.ti, dash:"dot", width:2}, yaxis:"y6", visible:maEnabled && isChecked("ti"), hovertemplate:"TI_10min %{y:.3f}<extra></extra>"});
-      traces.push({type:"scattergl", mode:"markers", marker:{color:axisColors.gust, size:4}, name:"GustFactor", x:t, y:d["GustFactor"], yaxis:"y6", visible:maEnabled && isChecked("gust"), hovertemplate:"GustFactor %{y:.3f}<extra></extra>"});
+      traces.push({type:"scattergl", mode:"lines", name:"TI_10min", x:t, y:displaySeries.TI_10min, line:{color:axisColors.ti, dash:"dot", width:2}, yaxis:"y6", visible:maEnabled && isChecked("ti"), hovertemplate:"TI_10min %{y:.3f}<extra></extra>"});
+      traces.push({type:"scattergl", mode:"markers", marker:{color:axisColors.gust, size:4}, name:"GustFactor", x:t, y:displaySeries.GustFactor, yaxis:"y6", visible:maEnabled && isChecked("gust"), hovertemplate:"GustFactor %{y:.3f}<extra></extra>"});
 
       return traces;
     }
@@ -406,16 +475,17 @@
       const leftLines = [];
       leftLines.push(fmtTime(d["TIMESTAMP"][i]));
       leftLines.push("");
-      leftLines.push(row("WS_100", d["WS_100"][i], "m/s"));
-      leftLines.push(row("WS_69W", d["WS_69W"][i], "m/s"));
-      leftLines.push(row("WS_38W", d["WS_38W"][i], "m/s"));
-      leftLines.push(row("WD_97", d["WD_97"][i], "deg", 1));
-      leftLines.push(row("WD_35", d["WD_35"][i], "deg", 1));
-      leftLines.push(row("AT_95", d["AT_95"][i], "C", 2));
-      leftLines.push(row("RH_95", d["RH_95"][i], "%", 2));
-      leftLines.push(row("BP_93", d["BP_93"][i], "hPa", 2));
-      leftLines.push(row("TI_10min", d["TI_10min"][i], "-", 3));
-      leftLines.push(row("GustFactor", d["GustFactor"][i], "-", 3));
+      const ws100Shown = (ws100DisplaySeries && ws100DisplaySeries[i] !== undefined) ? ws100DisplaySeries[i] : d["WS_100"][i];
+      leftLines.push(row("WS_100", ws100Shown, "m/s"));
+      leftLines.push(row("WS_69W", displaySeries.WS_69W && displaySeries.WS_69W[i], "m/s"));
+      leftLines.push(row("WS_38W", displaySeries.WS_38W && displaySeries.WS_38W[i], "m/s"));
+      leftLines.push(row("WD_97", displaySeries.WD_97 && displaySeries.WD_97[i], "deg", 1));
+      leftLines.push(row("WD_35", displaySeries.WD_35 && displaySeries.WD_35[i], "deg", 1));
+      leftLines.push(row("AT_95", displaySeries.AT_95 && displaySeries.AT_95[i], "C", 2));
+      leftLines.push(row("RH_95", displaySeries.RH_95 && displaySeries.RH_95[i], "%", 2));
+      leftLines.push(row("BP_93", displaySeries.BP_93 && displaySeries.BP_93[i], "hPa", 2));
+      leftLines.push(row("TI_10min", displaySeries.TI_10min && displaySeries.TI_10min[i], "-", 3));
+      leftLines.push(row("GustFactor", displaySeries.GustFactor && displaySeries.GustFactor[i], "-", 3));
 
       const rightLines = [];
       const s = ws100HoverStats[i];
@@ -441,11 +511,11 @@
       const gustOn = isChecked("gust");
       const wdOn = isChecked("wd97") || isChecked("wd35");
 
-      const rhRange = rhOn ? rangeFor(currentData && currentData["RH_95"]) : null;
-      const bpRange = bpOn ? rangeFor(currentData && currentData["BP_93"]) : null;
-      const atRange = atOn ? rangeFor(currentData && currentData["AT_95"]) : null;
-      const tiRange = tiOn ? rangeFor(currentData && currentData["TI_10min"]) : null;
-      const gustRange = gustOn ? rangeFor(currentData && currentData["GustFactor"]) : null;
+      const rhRange = rhOn ? rangeFor(displaySeries.RH_95) : null;
+      const bpRange = bpOn ? rangeFor(displaySeries.BP_93) : null;
+      const atRange = atOn ? rangeFor(displaySeries.AT_95) : null;
+      const tiRange = tiOn ? rangeFor(displaySeries.TI_10min) : null;
+      const gustRange = gustOn ? rangeFor(displaySeries.GustFactor) : null;
       const tiGustRange = mergeRanges(tiRange, gustRange);
 
       const panelVisible = {
@@ -539,13 +609,11 @@
 
         const xa = plot._fullLayout && plot._fullLayout.xaxis;
         const tArr = currentData && currentData["TIMESTAMP"];
-        if (!xa || !xa.range || !tArr || !tArr.length) return;
-        const ratio = (e.clientX - dragRect.left) / dragRect.width;
-        const clamped = Math.max(0, Math.min(1, ratio));
-        const start = new Date(xa.range[0]).getTime();
-        const end = new Date(xa.range[1]).getTime();
-        if (!Number.isFinite(start) || !Number.isFinite(end)) return;
-        const targetMs = start + (end - start) * clamped;
+        if (!xa || typeof xa.p2d !== "function" || !tArr || !tArr.length) return;
+        const pixelXInPlot = e.clientX - dragRect.left;
+        const targetX = xa.p2d(pixelXInPlot);
+        const targetMs = new Date(targetX).getTime();
+        if (!Number.isFinite(targetMs)) return;
         const idx = nearestIndexByTime(tArr, targetMs);
         updateHoverPanel(buildHoverPanelHtmlByIndex(idx));
       };
@@ -622,6 +690,21 @@
       render(e.target.value);
     };
 
+    function keepCurrentMonthAtTopOnOpen() {
+      const sel = document.getElementById("monthSelect");
+      if (!sel) return;
+      const scrollSelectedToTop = () => {
+        const idx = sel.selectedIndex;
+        if (idx < 0) return;
+        const opt = sel.options[idx];
+        if (opt && typeof opt.scrollIntoView === "function") {
+          opt.scrollIntoView({block: "start"});
+        }
+      };
+      sel.addEventListener("mousedown", () => setTimeout(scrollSelectedToTop, 0));
+      sel.addEventListener("focus", () => setTimeout(scrollSelectedToTop, 0));
+    }
+
     async function init() {
       try {
         const resp = await fetch(`${aggBase}/months.json`);
@@ -635,10 +718,12 @@
         console.warn("months.json fetch error, using fallback", e);
       }
       await buildMonthOptions();
-      render(months[0]);
+      keepCurrentMonthAtTopOnOpen();
+      render(document.getElementById("monthSelect").value);
     }
 
     init();
   </script>
 </body>
 </html>
+
